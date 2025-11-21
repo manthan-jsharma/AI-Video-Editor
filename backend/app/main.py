@@ -4,7 +4,8 @@ import shutil
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-
+from app.services.video_utils import burn_subtitles
+from fastapi.responses import FileResponse
 from app.schemas import ChatRequest
 from app.services.transcriber import transcribe_video
 from app.agent.graph import graph
@@ -43,6 +44,7 @@ async def upload_video(file: UploadFile = File(...)):
         "video_path": file_path,
         "subtitles": subtitles,
         "style": {"font_color": "white", "font_size": 24, "position": "bottom"},
+        "visuals": [],
         "messages": []
     }
     
@@ -52,6 +54,7 @@ async def upload_video(file: UploadFile = File(...)):
         "session_id": session_id,
         "video_url": f"http://127.0.0.1:8000/static/{session_id}_{file.filename}",
         "subtitles": subtitles,
+        "visuals": [],
         "style": initial_state["style"]
     }
 
@@ -74,11 +77,41 @@ async def chat_agent(req: ChatRequest):
         SESSIONS[req.session_id]["style"] = result["style"]
     if "subtitles" in result:
         SESSIONS[req.session_id]["subtitles"] = result["subtitles"]
+    if "visuals" in result:
+        SESSIONS[req.session_id]["visuals"] = result["visuals"]    
         
     final_state = SESSIONS[req.session_id]
     
     return {
         "reply": result["messages"][-1].content,
         "updated_style": final_state["style"],
-        "updated_subtitles": final_state["subtitles"]
+        "updated_subtitles": final_state["subtitles"],
+        "updated_visuals": final_state.get("visuals", [])
+
     }
+
+@app.post("/export")
+async def export_video(req: ChatRequest):
+    session_id = req.session_id
+    if session_id not in SESSIONS:
+        raise HTTPException(404, "Session not found")
+        
+    state = SESSIONS[session_id]
+    
+    input_path = state["video_path"]
+    output_filename = f"burned_{os.path.basename(input_path)}"
+    output_path = f"processed/{output_filename}"
+    
+    success = burn_subtitles(input_path, state["subtitles"], state["style"], output_path)
+    
+    if not success:
+        raise HTTPException(500, "Video processing failed")
+        
+    return {"download_url": f"[http://127.0.0.1:8000/download/](http://127.0.0.1:8000/download/){output_filename}"}
+
+@app.get("/download/{filename}")
+async def download_file(filename: str):
+    file_path = f"processed/{filename}"
+    if os.path.exists(file_path):
+        return FileResponse(file_path, media_type="video/mp4", filename=filename)
+    raise HTTPException(404, "File not found")

@@ -16,3 +16,9 @@ class StyleConfig(BaseModel):
 class ChatRequest(BaseModel):
     session_id: str
     prompt: str
+
+class VisualAsset(BaseModel):
+    start: float
+    end: float
+    keyword: str 
+    url: str   

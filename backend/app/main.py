@@ -45,6 +45,9 @@ async def upload_video(file: UploadFile = File(...)):
         "subtitles": subtitles,
         "style": {"font_color": "white", "font_size": 24, "position": "bottom"},
         "visuals": [],
+        "hud_items": [],
+        "camera_moves": [],
+        "text_layers": [],
         "messages": []
     }
     
@@ -55,6 +58,9 @@ async def upload_video(file: UploadFile = File(...)):
         "video_url": f"http://127.0.0.1:8000/static/{session_id}_{file.filename}",
         "subtitles": subtitles,
         "visuals": [],
+        "hud_items": [],
+        "camera_moves": [],
+        "text_layers": [],
         "style": initial_state["style"]
     }
 
@@ -78,7 +84,13 @@ async def chat_agent(req: ChatRequest):
     if "subtitles" in result:
         SESSIONS[req.session_id]["subtitles"] = result["subtitles"]
     if "visuals" in result:
-        SESSIONS[req.session_id]["visuals"] = result["visuals"]    
+        SESSIONS[req.session_id]["visuals"] = result["visuals"]  
+    if "hud_items" in result:
+        SESSIONS[req.session_id]["hud_items"] = result["hud_items"]
+    if "camera_moves" in result:
+        SESSIONS[req.session_id]["camera_moves"] = result["camera_moves"]    
+    if "text_layers" in result:
+        SESSIONS[req.session_id]["text_layers"] = result["text_layers"]     
         
     final_state = SESSIONS[req.session_id]
     
@@ -86,7 +98,10 @@ async def chat_agent(req: ChatRequest):
         "reply": result["messages"][-1].content,
         "updated_style": final_state["style"],
         "updated_subtitles": final_state["subtitles"],
-        "updated_visuals": final_state.get("visuals", [])
+        "updated_visuals": final_state.get("visuals", []),
+        "updated_hud": final_state.get("hud_items", []),
+        "updated_camera": final_state.get("camera_moves", []),
+        "updated_text_layers": final_state.get("text_layers", [])
 
     }
 

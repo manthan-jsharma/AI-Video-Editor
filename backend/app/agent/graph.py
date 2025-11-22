@@ -19,7 +19,10 @@ if not api_key:
 class AgentState(TypedDict):
     messages: Annotated[List[BaseMessage], add_messages]
     subtitles: List[dict] 
-    visuals: List[dict] 
+    hud_items: List[dict] 
+    visuals: List[dict]
+    camera_moves: List[dict]
+    text_layers: List[dict] 
     style: dict         
 
 llm = ChatGoogleGenerativeAI(
@@ -74,10 +77,13 @@ def find_timestamp_for_phrase(subtitles, phrase):
 def editor_agent(state: AgentState):
     messages = state["messages"]
     last_user_msg = messages[-1].content
+    current_cam = state.get("camera_moves", [])
     
     current_style = json.dumps(state["style"])
     sample_subs = json.dumps(state["subtitles"][:3]) 
     current_visuals = state.get("visuals", [])
+    current_hud = state.get("hud_items", [])
+    current_text_layers = state.get("text_layers", [])
     subs_text_only = [s['text'] for s in state["subtitles"]]
     subs_context = json.dumps(subs_text_only[:50])
     system_prompt = f"""
@@ -92,6 +98,34 @@ def editor_agent(state: AgentState):
     
     INSTRUCTIONS:
     Analyze the request and output valid JSON ONLY.
+
+     SCENARIO 1: Text Behind Person (Depth Effect).
+    - User wants huge text behind them.
+    - 'text_content': The text to show (e.g. "EPIC").
+     - 'text_props': Styling details.
+        - size: number (default 150).
+        - color: hex or name (default "white").
+        - font: "sans-serif", "serif", "cursive", "monospace".
+        - position_y: "center", "top", "bottom".
+        - animation: "zoom" (default), "fade", "slide-left", "slide-right", "bounce", "typewriter".
+        - shadow: boolean (default true).
+    - 'trigger_phrase': When to show it.
+    - Output: {{ "action": "text_behind", "text_content": "...", "trigger_phrase": "...", "text_props": {{ "color": "red", "position_y": "top", "animation": "slide-left" }}  }}
+
+    SCENARIO 2: Camera / Zoom (User wants movement, zoom, pan).
+    - 'trigger_phrase': Exact words in transcript to sync the move to.
+    - 'type': "zoom-in" (Close up), "zoom-out" (Wide), "pan-left", "pan-right", "shake".
+    - 'intensity': 1.2 (Subtle) to 2.0 (Extreme). Default 1.4.
+    - Output: {{ "action": "camera", "type": "zoom-in", "intensity": 1.5, "trigger_phrase": "..." }}
+ 
+    SCENARIO 3: HUD / Augmented Intelligence (User wants facts, data, or context).
+       - 'trigger_phrase': The exact words in the transcript to link this fact to.
+       - 'title': Short title (e.g. "Stock Market 2008", "Bio-Data").
+       - 'content': 1-2 sentences of verified fact or context about the topic.
+       - 'type': "info" (Blue), "alert" (Red/Warning), "success" (Green/Verified).
+       - Output: {{ "action": "hud", "title": "...", "content": "...", "type": "info", "trigger_phrase": "..." }}
+    
+    SCENARIO 4: 
     1. If user wants to change style -> Action: "style"
     2. If user wants to ADD ILLUSTRATIONS/IMAGES -> Action: "visual"
        - Identify the KEYWORD they mentioned.
@@ -104,15 +138,15 @@ def editor_agent(state: AgentState):
             - opacity: 0.1 to 1.0 (default 1.0).
        - Output: {{ "action": "visual", "keyword": "cyberpunk city", "img_style": "hyperrealistic 8k render", "trigger_phrase": "Bhai Mantan","visual_props": {{ "position": "center", "animation": "pop", "opacity": 0.9, "blend_mode": "screen" }} }}
     
-    SCENARIO 1: User wants to change visual style (color, size, font).
+    SCENARIO 5: User wants to change visual style (color, size, font).
     Output: {{ "action": "style", "new_style": {{ "font_color": "Yellow", "font_size": 30 }} }}
     (Only include fields that changed. Use standard CSS colors).
 
-    SCENARIO 2: User wants to fix typos or change text.
+    SCENARIO 6: User wants to fix typos or change text.
     Output: {{ "action": "chat", "response": "I can help with that, but specific text editing is best done manually for now. Shall I change the style instead?" }}
    
     
-    SCENARIO 3: General Chat.
+    SCENARIO 7: General Chat.
     Output: {{ "action": "chat", "response": "Your reply here." }}
     """
 
@@ -133,7 +167,70 @@ def editor_agent(state: AgentState):
         decision = json.loads(clean_content)
         print(f"✅ PARSED JSON: {decision}")
 
-        if decision.get("action") == "visual":
+        if decision.get("action") == "text_behind":
+            text_content = decision.get("text_content", "TEXT")
+            trigger = decision.get("trigger_phrase", "")
+            props = decision.get("text_props", {})
+            start, end = find_timestamp_for_phrase(state["subtitles"], trigger)
+            
+            if start == 0: start = 0; end = 5.0
+
+            new_layer = {
+                "id": str(len(current_text_layers) + 1),
+                "start": start,
+                "end": end,
+                "text": text_content,
+                "props": props 
+            }
+            
+            return {
+                "messages": [BaseMessage(content=f"Added Depth Text '{text_content}' at {start:.1f}s", type="ai")],
+                "text_layers": current_text_layers + [new_layer]
+            }
+
+        elif decision.get("action") == "camera":
+            trigger = decision.get("trigger_phrase", "")
+            start, end = find_timestamp_for_phrase(state["subtitles"], trigger)
+            
+            if start == 0: start = 0; end = 3.0
+
+            new_move = {
+                "id": str(len(current_cam) + 1),
+                "start": start,
+                "end": end,
+                "type": decision.get("type", "zoom-in"),
+                "intensity": decision.get("intensity", 1.4)
+            }
+            
+            return {
+                "messages": [BaseMessage(content=f"Added Camera Move: {new_move['type']} at {start:.1f}s", type="ai")],
+                "camera_moves": current_cam + [new_move]
+            }
+
+        elif decision.get("action") == "hud":
+            trigger = decision.get("trigger_phrase", "")
+            start, end = find_timestamp_for_phrase(state["subtitles"], trigger)
+     
+            if start == 0: 
+                start = current_hud[-1]["end"] + 1 if current_hud else 0
+                end = start + 4.0
+
+            new_hud = {
+                "id": str(len(current_hud) + 1),
+                "start": start,
+                "end": end,
+                "title": decision.get("title", "Info"),
+                "content": decision.get("content", ""),
+                "type": decision.get("type", "info")
+            }
+            
+            return {
+                "messages": [BaseMessage(content=f"Added HUD Card: '{new_hud['title']}' at {start:.1f}s", type="ai")],
+                "hud_items": current_hud + [new_hud] 
+            }
+
+
+        elif decision.get("action") == "visual":
             keyword = decision.get("keyword", "abstract")
             trigger = decision.get("trigger_phrase", "")
             img_style = decision.get("img_style", "")

@@ -1,9 +1,10 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import ReactPlayer from "react-player";
 import client from "../api/client";
 import { Upload, Send, Download, Clapperboard, Sparkles } from "lucide-react";
 import { clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
+import { SelfieSegmentation } from "@mediapipe/selfie_segmentation";
 
 const VideoEditor = () => {
   const [sessionId, setSessionId] = useState(null);
@@ -13,12 +14,72 @@ const VideoEditor = () => {
   const [visuals, setVisuals] = useState([]);
   const [chatHistory, setChatHistory] = useState([]);
   const [prompt, setPrompt] = useState("");
-
+  const [hudItems, setHudItems] = useState([]);
   const [playing, setPlaying] = useState(false);
+  const [textLayers, setTextLayers] = useState([]);
+  const [cameraMoves, setCameraMoves] = useState([]);
   const [currentTime, setCurrentTime] = useState(0);
   const [loading, setLoading] = useState(false);
 
+  const playerRef = useRef(null);
+  const canvasRef = useRef(null);
+  const segmentationRef = useRef(null);
+  const animationRef = useRef(null);
+
   const cn = (...inputs) => twMerge(clsx(inputs));
+
+  useEffect(() => {
+    const selfieSegmentation = new SelfieSegmentation({
+      locateFile: (file) => {
+        return `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${file}`;
+      },
+    });
+
+    selfieSegmentation.setOptions({
+      modelSelection: 1,
+    });
+
+    selfieSegmentation.onResults(onResults);
+
+    segmentationRef.current = selfieSegmentation;
+
+    return () => {
+      if (animationRef.current) cancelAnimationFrame(animationRef.current);
+    };
+  }, []);
+
+  const onResults = (results) => {
+    const canvas = canvasRef.current;
+    const ctx = canvas?.getContext("2d");
+    if (!canvas || !ctx) return;
+
+    ctx.save();
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    ctx.drawImage(results.segmentationMask, 0, 0, canvas.width, canvas.height);
+
+    ctx.globalCompositeOperation = "source-in";
+
+    ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
+
+    ctx.restore();
+  };
+
+  const processFrame = async () => {
+    if (playerRef.current && playing) {
+      const internalPlayer = playerRef.current.getInternalPlayer();
+
+      if (internalPlayer && internalPlayer.tagName === "VIDEO") {
+        await segmentationRef.current.send({ image: internalPlayer });
+      }
+    }
+    animationRef.current = requestAnimationFrame(processFrame);
+  };
+
+  useEffect(() => {
+    if (playing) animationRef.current = requestAnimationFrame(processFrame);
+    else cancelAnimationFrame(animationRef.current);
+  }, [playing]);
 
   const handleUpload = async (e) => {
     const file = e.target.files[0];
@@ -67,6 +128,10 @@ const VideoEditor = () => {
       if (res.data.updated_style) setStyle(res.data.updated_style);
       if (res.data.updated_subtitles) setSubtitles(res.data.updated_subtitles);
       if (res.data.updated_visuals) setVisuals(res.data.updated_visuals);
+      if (res.data.updated_hud) setHudItems(res.data.updated_hud);
+      if (res.data.updated_camera) setCameraMoves(res.data.updated_camera);
+      if (res.data.updated_text_layers)
+        setTextLayers(res.data.updated_text_layers);
     } catch (err) {
       console.error(err);
     }
@@ -108,6 +173,52 @@ const VideoEditor = () => {
   const currentVisual =
     activeVisuals.length > 0 ? activeVisuals[activeVisuals.length - 1] : null;
 
+  const activeHud = hudItems?.find(
+    (h) => currentTime >= h.start && currentTime <= h.end
+  );
+  const activeCamera = cameraMoves?.find(
+    (c) => currentTime >= c.start && currentTime <= c.end
+  );
+  const activeTextLayer = textLayers.find(
+    (l) => currentTime >= l.start && currentTime <= l.end
+  );
+
+  const getTextLayerStyle = (layer) => {
+    const props = layer.props || {};
+    const size = props.size || 150;
+    const color = props.color || "white";
+    const font = props.font || "sans-serif";
+    const yPos = props.position_y || "center";
+    const anim = props.animation || "fade";
+
+    const positions = {
+      top: "items-start pt-10",
+      center: "items-center",
+      bottom: "items-end pb-10",
+    };
+
+    const animations = {
+      zoom: "animate-in zoom-in duration-300",
+      fade: "animate-in fade-in duration-500",
+      "slide-left": "animate-in slide-in-from-right duration-500",
+      "slide-right": "animate-in slide-in-from-left duration-500",
+      bounce: "animate-bounce",
+      pulse: "animate-pulse",
+    };
+
+    return {
+      container: `absolute inset-0 flex justify-center z-30 pointer-events-none ${positions[yPos]}`,
+      textClass: `font-black uppercase tracking-widest text-center ${animations[anim]}`,
+      textStyle: {
+        fontSize: `${size}px`,
+        color: color,
+        fontFamily: font,
+        textShadow:
+          props.shadow !== false ? "0 10px 30px rgba(0,0,0,0.5)" : "none",
+        lineHeight: 1,
+      },
+    };
+  };
   const getVisualStyles = (visual) => {
     const props = visual.props || {};
     const pos = props.position || "center";
@@ -142,6 +253,31 @@ const VideoEditor = () => {
     };
   };
 
+  const getCameraStyle = () => {
+    if (!activeCamera)
+      return { transition: "transform 0.5s ease-out", transform: "scale(1)" };
+
+    const scale = activeCamera.intensity || 1.4;
+    const type = activeCamera.type;
+
+    let transform = `scale(${scale})`;
+    let origin = "center center";
+
+    if (type === "pan-left") origin = "center left";
+    if (type === "pan-right") origin = "center right";
+    if (type === "zoom-out") transform = `scale(0.8)`;
+    if (type === "shake")
+      transform = `translate(${Math.random() * 10}px, ${
+        Math.random() * 10
+      }px) scale(1.1)`;
+
+    return {
+      transition: "transform 0.8s cubic-bezier(0.25, 0.46, 0.45, 0.94)",
+      transform: transform,
+      transformOrigin: origin,
+    };
+  };
+
   return (
     <div className="flex h-screen bg-[#0f0f0f] text-white font-sans overflow-hidden">
       <div className="flex-1 relative flex flex-col items-center justify-center bg-black p-4">
@@ -171,16 +307,36 @@ const VideoEditor = () => {
           </div>
         ) : (
           <div className="relative w-full max-w-6xl aspect-video bg-black shadow-2xl overflow-hidden border border-gray-800 rounded-xl group">
-            <ReactPlayer
-              url={videoUrl}
-              playing={playing}
-              controls={true}
-              width="100%"
-              height="100%"
-              style={{ objectFit: "contain" }}
-              onProgress={(p) => setCurrentTime(p.playedSeconds)}
-            />
+            <div className="w-full h-full" style={getCameraStyle()}>
+              <ReactPlayer
+                url={videoUrl}
+                playing={playing}
+                controls={true}
+                width="100%"
+                height="100%"
+                style={{ objectFit: "contain" }}
+                onProgress={(p) => setCurrentTime(p.playedSeconds)}
+                config={{ file: { attributes: { crossOrigin: "anonymous" } } }}
+              />
+            </div>
+            {activeTextLayer &&
+              (() => {
+                const style = getTextLayerStyle(activeTextLayer);
+                return (
+                  <div className={style.container}>
+                    <h1 className={style.textClass} style={style.textStyle}>
+                      {activeTextLayer.text}
+                    </h1>
+                  </div>
+                );
+              })()}
 
+            <canvas
+              ref={canvasRef}
+              className="absolute inset-0 w-full h-full z-40 pointer-events-none"
+              width={1280}
+              height={720}
+            />
             {currentVisual &&
               (() => {
                 const styles = getVisualStyles(currentVisual);
@@ -197,6 +353,44 @@ const VideoEditor = () => {
                   </div>
                 );
               })()}
+
+            {activeHud && (
+              <div className="absolute top-10 left-10 z-50 w-64 animate-[slideInLeft_0.5s_ease-out]">
+                <div
+                  className={`
+                        backdrop-blur-xl bg-black/40 border border-white/20 
+                        rounded-xl p-4 shadow-2xl text-left
+                        ${
+                          activeHud.type === "alert"
+                            ? "border-l-4 border-l-red-500"
+                            : activeHud.type === "success"
+                            ? "border-l-4 border-l-green-500"
+                            : "border-l-4 border-l-blue-500"
+                        }
+                    `}
+                >
+                  <div className="flex items-center gap-2 mb-1">
+                    <div
+                      className={`w-2 h-2 rounded-full animate-pulse 
+                                ${
+                                  activeHud.type === "alert"
+                                    ? "bg-red-500"
+                                    : activeHud.type === "success"
+                                    ? "bg-green-500"
+                                    : "bg-blue-500"
+                                }`}
+                    />
+                    <h3 className="font-bold text-sm uppercase tracking-wider text-white/90">
+                      {activeHud.title}
+                    </h3>
+                  </div>
+                  <p className="text-xs text-gray-200 leading-relaxed font-light">
+                    {activeHud.content}
+                  </p>
+                </div>
+              </div>
+            )}
+
             {activeSub && (
               <div
                 className="absolute w-full text-center z-40 pointer-events-none transition-all duration-300"

@@ -29,9 +29,12 @@ const VideoEditor = () => {
   const cn = (...inputs) => twMerge(clsx(inputs));
 
   useEffect(() => {
+    console.log("🔧 MOUNTING: Initializing SelfieSegmentation...");
     const selfieSegmentation = new SelfieSegmentation({
       locateFile: (file) => {
-        return `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${file}`;
+        const url = `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${file}`;
+        console.log(`📂 LOADING MODEL FILE: ${url}`);
+        return url;
       },
     });
 
@@ -39,7 +42,15 @@ const VideoEditor = () => {
       modelSelection: 1,
     });
 
-    selfieSegmentation.onResults(onResults);
+    selfieSegmentation.onResults((results) => {
+      const now = Date.now();
+      if (now - lastLogTime.current > 2000) {
+        console.log("🟢 AI SUCCESS: Result Received!");
+        setAiStatus("Active & Running");
+        lastLogTime.current = now;
+      }
+      onResults(results);
+    });
 
     segmentationRef.current = selfieSegmentation;
 
@@ -61,24 +72,41 @@ const VideoEditor = () => {
     ctx.globalCompositeOperation = "source-in";
 
     ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
+    ctx.globalCompositeOperation = "source-over";
+    ctx.strokeStyle = "red";
+    ctx.lineWidth = 5;
+    ctx.strokeRect(0, 0, canvas.width, canvas.height);
 
     ctx.restore();
   };
-
   const processFrame = async () => {
-    if (playerRef.current && playing) {
+    if (!playing) return;
+    if (playerRef.current && isPlayerReady && segmentationRef.current) {
       const internalPlayer = playerRef.current.getInternalPlayer();
-
       if (internalPlayer && internalPlayer.tagName === "VIDEO") {
-        await segmentationRef.current.send({ image: internalPlayer });
+        try {
+          await segmentationRef.current.send({ image: internalPlayer });
+        } catch (err) {
+          console.warn("⚠️ AI Skip:", err.message);
+        }
+      } else {
+        console.warn("⚠️ Internal Player is NOT a video tag yet.");
       }
     }
     animationRef.current = requestAnimationFrame(processFrame);
   };
-
   useEffect(() => {
-    if (playing) animationRef.current = requestAnimationFrame(processFrame);
-    else cancelAnimationFrame(animationRef.current);
+    if (playing) {
+      console.log("🚀 STARTING FRAME LOOP");
+      if (animationRef.current) cancelAnimationFrame(animationRef.current);
+      animationRef.current = requestAnimationFrame(processFrame);
+    } else {
+      console.log("🛑 STOPPING FRAME LOOP");
+      if (animationRef.current) cancelAnimationFrame(animationRef.current);
+    }
+    return () => {
+      if (animationRef.current) cancelAnimationFrame(animationRef.current);
+    };
   }, [playing]);
 
   const handleUpload = async (e) => {
@@ -315,6 +343,15 @@ const VideoEditor = () => {
                 width="100%"
                 height="100%"
                 style={{ objectFit: "contain" }}
+                onPlay={() => {
+                  console.log("▶️ VIDEO STARTED");
+                  setPlaying(true);
+                }}
+                onPause={() => {
+                  console.log("⏸️ VIDEO PAUSED");
+                  setPlaying(false);
+                }}
+                onEnded={() => setPlaying(false)}
                 onProgress={(p) => setCurrentTime(p.playedSeconds)}
                 config={{ file: { attributes: { crossOrigin: "anonymous" } } }}
               />

@@ -23,6 +23,7 @@ class AgentState(TypedDict):
     visuals: List[dict]
     camera_moves: List[dict]
     text_layers: List[dict] 
+    pending_operation: str
     style: dict         
 
 llm = ChatGoogleGenerativeAI(
@@ -137,16 +138,20 @@ def editor_agent(state: AgentState):
             - blend_mode: "normal" (default), "screen" (for holograms/ghosts), "multiply" (for dark overlays), "overlay".
             - opacity: 0.1 to 1.0 (default 1.0).
        - Output: {{ "action": "visual", "keyword": "cyberpunk city", "img_style": "hyperrealistic 8k render", "trigger_phrase": "Bhai Mantan","visual_props": {{ "position": "center", "animation": "pop", "opacity": 0.9, "blend_mode": "screen" }} }}
+
+    SCENARIO 5: Auto Cut / Silence Removal.
+    - User wants to remove pauses, silence, or make it faster.
+    - Output: {{ "action": "auto_cut" }}
     
-    SCENARIO 5: User wants to change visual style (color, size, font).
+    SCENARIO 6: User wants to change visual style (color, size, font).
     Output: {{ "action": "style", "new_style": {{ "font_color": "Yellow", "font_size": 30 }} }}
     (Only include fields that changed. Use standard CSS colors).
 
-    SCENARIO 6: User wants to fix typos or change text.
+    SCENARIO 7: User wants to fix typos or change text.
     Output: {{ "action": "chat", "response": "I can help with that, but specific text editing is best done manually for now. Shall I change the style instead?" }}
    
     
-    SCENARIO 7: General Chat.
+    SCENARIO 8: General Chat.
     Output: {{ "action": "chat", "response": "Your reply here." }}
     """
 
@@ -165,7 +170,13 @@ def editor_agent(state: AgentState):
             clean_content = match.group(0)
             
         decision = json.loads(clean_content)
-        print(f"✅ PARSED JSON: {decision}")
+        print(f"PARSED JSON: {decision}")
+
+        if decision.get("action") == "auto_cut":
+            return {
+                "messages": [BaseMessage(content="✂️ Slicing out the silence... creating a new video version.", type="ai")],
+                "pending_operation": "auto_cut"
+            }
 
         if decision.get("action") == "text_behind":
             text_content = decision.get("text_content", "TEXT")
@@ -273,7 +284,7 @@ def editor_agent(state: AgentState):
             return {"messages": [BaseMessage(content=decision["response"], type="ai")]}
             
     except Exception as e:
-        print(f"❌ PARSE ERROR: {e}")
+        print(f"PARSE ERROR: {e}")
         return {"messages": [BaseMessage(content="I tried to process that, but I got confused. Please try again.", type="ai")]}
 
     return {"messages": [ai_msg]}

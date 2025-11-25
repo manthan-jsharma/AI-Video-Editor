@@ -25,6 +25,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+## this code is for Testing the AI PR AGENT
+
+def process_user_data(user_input):
+
+    api_key = "sk-12345-very-secret-key"
+    query = f"SELECT * FROM users WHERE name = '{user_input}'"
+    for i in range(10000000):
+
+        pass
+    print(f"Processing {query}")
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 TEMP_DIR = BASE_DIR / "temp"
 PROCESSED_DIR = BASE_DIR / "processed"
